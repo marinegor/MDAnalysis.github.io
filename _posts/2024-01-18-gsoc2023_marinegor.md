@@ -25,9 +25,9 @@ Altogether, the `AnalysisBase.run()` has changed by addition of the following me
  - `_setup_computation_groups()`: split frames into multiple parts for separate analysis
  - `_compute()`: run `_single_frame` on a list of frames, but without running `_conclude`
  - `_get_aggregator()`: get an object to aggregate the run results with, making them compatible with subsequent `_conclude`
- - class property `available_backends()`: get list of `str` values that describe available backends for a given subclass
+ - class property `supported_backends()`: get tuple of `str` values that describe available backends for a given subclass
 
-I've also added `ParallelExecutor` and `ResultsGroup` classes that abstract away parallel execution and results aggregation, respectively. And finally, I added `multiprocessing` and `dask` backends that reportedly speed up the analysis!
+I've also added `BackendBase` and `ResultsGroup` classes that abstract away parallel execution and results aggregation, respectively. And finally, I added `multiprocessing` and `dask` backends that reportedly speed up the analysis!
 
 ## The current state
 Currently, changes to the `AnalysisBase` are almost finalized. One thing that holds it back is some CI/CD issues causing tests to timeout, but all `AnalysisBase`-related tests run both locally and on CI/CD system.
@@ -72,10 +72,10 @@ Cell In[11], line 2
       1 from MDAnalysis.analysis.align import AverageStructure
       2 avg = AverageStructure(mobile=u).run(backend='multiprocessing', n_workers=16)
 ...
-ValueError: backend=multiprocessing is not in self.available_backends=('local',) for class AverageStructure
+ValueError: backend=multiprocessing is not in self.available_backends=('serial',) for class AverageStructure
 ```
 
-which basically says we can use only `backend='local'` for the `AverageStructure`. Ok, let's do that, but with a large step to save time:
+which basically says we can use only `backend='serial'` (which means "current process processing data in serial fashion") for the `AverageStructure`. Ok, let's do that, but with a large step to save time:
 
 
 ```python
@@ -108,7 +108,7 @@ Let's try to speed it up now. Which backends do we have available?
 
 ```python
 >>> rms.RMSD.available_backends
-('local', 'multiprocessing', 'dask')
+('serial', 'multiprocessing', 'dask')
 ```
 
 Let's try a built-in `multiprocessing` first:
@@ -122,45 +122,9 @@ Let's try a built-in `multiprocessing` first:
 OK, this is roughly 4 times faster! Amazing, roughly as we expected.
 Spoiler though -- if we do it with 16 workers, we'll see the total time around 40 seconds, so improvement saturates at some point.
 
-But, we've lost something valuable when switching to `multiprocessing` -- we don't have a decent progressbar anymore. Luckily, we can use an amazing `dask` dashboard that allows us to monitor all tasks given to a particular `dask.distributed` cluster!
-
-Let's set up a cluster first:
-
-```python
-from dask.distributed import Client, LocalCluster
-
-cluster = LocalCluster(n_workers=8, 
-                       threads_per_worker=1,
-                       memory_limit='30Gb')
-client = Client(cluster)
-```
-
-and open the dashboard in our browser:
-
-```python
->>> cluster.dashboard_link
-'http://127.0.0.1:8787/status'
-```
-
-Now, we're ready to pass the pre-configured `client` as an argument to our `R.run()`:
-
-```python
-R.run(client=client)
-```
-
-Unfortunately, we won't see much progress -- we can see that all tasks got spawned, but their status will change only upon completion, and we won't get any intermediate progress report.
-
-But luckily, there is a way to control that: in `R.run()` function, you can split the workload into an arbitrary number of parts with `n_parts = ...`, and upon completion of each of them `dask` would report that. Let's do this:
-
-```python
-R.run(client=client, n_parts=96)
-```
-
-Now we'll see intermediate progress as well as soon as each part gets completed, which is super helpful when trying to estimate the completion time.
-
 
 ## Conclusion
-We've now gone through the essence of the MDAnalysis parallelization project, and learned how to use it in your analysis either by simply adding `backend='multiprocessing', n_workers=...`, or setting up your own `dask` cluster and submitting your jobs there.
+We've now gone through the essence of the MDAnalysis parallelization project, and learned how to use it in your analysis either by simply adding `backend='multiprocessing', n_workers=...`, or using `dask` if you want to have more flexible serialization.
 
 Hopefully, this project will grow further and include all existing subclasses, as well as improving the speed (which, as we saw, saturates) and memory efficiency.
 
